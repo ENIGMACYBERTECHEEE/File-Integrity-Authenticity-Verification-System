@@ -441,9 +441,12 @@ function Dashboard({ onLogout }) {
     const handleVerify = async (fileId) => {
         try {
             const result = await api.verifyFile(fileId);
-            setSuccess(`Verification complete: ${result.verification_status}`);
+            const status = result.verified ? '✅ Verified - File is authentic and unmodified' : 
+                          result.tampered ? '⚠️ Tampered - File has been modified' : 
+                          result.verification_status || 'Complete';
+            setSuccess(`Verification complete: ${status}`);
             loadFiles();
-            setTimeout(() => setSuccess(''), 3000);
+            setTimeout(() => setSuccess(''), 5000);
         } catch (err) {
             setError(err.message);
             setTimeout(() => setError(''), 3000);

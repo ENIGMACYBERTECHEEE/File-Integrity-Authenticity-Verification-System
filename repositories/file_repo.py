@@ -167,6 +167,36 @@ class FileRepository:
             logger.error(f"Error incrementing verification count: {str(e)}")
             return False
     
+    def update_verification_status(self, file_id: str, status: str, verified: bool) -> bool:
+        """
+        Update verification status of a file.
+        
+        Args:
+            file_id: File ID
+            status: Verification status (verified, tampered, pending)
+            verified: Whether file is verified
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            result = self.collection.update_one(
+                {"file_id": file_id},
+                {
+                    "$set": {
+                        "verification_status": status,
+                        "verified": verified,
+                        "last_verified": datetime.utcnow()
+                    },
+                    "$inc": {"verification_count": 1}
+                }
+            )
+            logger.info(f"Verification status updated for {file_id}: {status}")
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Error updating verification status: {str(e)}")
+            return False
+    
     def file_exists(self, file_id: str) -> bool:
         """
         Check if file exists and is not deleted.

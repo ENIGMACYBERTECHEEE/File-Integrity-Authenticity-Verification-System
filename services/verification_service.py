@@ -110,8 +110,9 @@ class VerificationService:
             
             verification_id = verification_repository.create_verification(verification_data)
             
-            # Step 11: Update file metadata
-            file_repository.increment_verification_count(file_id)
+            # Step 11: Update file metadata with verification status
+            status = "verified" if verified else "tampered"
+            file_repository.update_verification_status(file_id, status, verified)
             
             # Step 12: Log audit event
             result_status = "success" if verified else "failure"
@@ -137,6 +138,7 @@ class VerificationService:
                 "file_id": file_id,
                 "filename": file["filename"],
                 "verified": verified,
+                "verification_status": status,
                 "hash_match": hash_match,
                 "signature_valid": signature_valid,
                 "tampered": tampered,
