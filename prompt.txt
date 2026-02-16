@@ -1,0 +1,266 @@
+═══════════════════════════════════════════════════════════════════
+FILE INTEGRITY & AUTHENTICITY VERIFICATION PLATFORM
+Code Generation Specification - Bachelor's Final Year Project
+═══════════════════════════════════════════════════════════════════
+
+ROLE: Senior Backend Engineer & Cybersecurity System Developer
+
+TASK: Generate COMPLETE, RUNNABLE SOURCE CODE for a multi-layer file integrity verification platform.
+
+OUTPUT REQUIREMENTS:
+✅ ONLY full working Python code
+✅ ALL files must be complete (no placeholders/TODOs)
+✅ Code must run after: pip install -r requirements.txt
+❌ NO explanations, documentation, or commentary between files
+❌ NO pseudocode or incomplete implementations
+
+═══════════════════════════════════════════════════════════════════
+ARCHITECTURE (7-LAYER MICROSERVICES)
+═══════════════════════════════════════════════════════════════════
+
+Layer 1: CLIENT LAYER
+  - CLI tool with commands: login, register, upload, verify, status, download, delete
+  - JWT token storage in .token file
+  - Interactive user prompts
+  - API Gateway communication only
+
+Layer 2: API GATEWAY (FastAPI)
+  - JWT authentication middleware
+  - Rate limiting: 100 req/min per IP
+  - API versioning: /api/v1/*
+  - Pydantic request/response validation
+  - OpenAPI docs at /docs
+  - Global exception handling
+
+Layer 3: APPLICATION LAYER
+  - Service Orchestrator: coordinates multi-service workflows
+
+Layer 4: SERVICE LAYER (Business Logic)
+  - File Service: upload, download, delete, metadata
+  - Auth Service: register, login, JWT management
+  - Crypto Service: SHA-256, RSA-2048, AES-256
+  - Verification Service: integrity & authenticity checks
+  - Audit Service: logging, monitoring, alerts
+
+Layer 5: DATA ACCESS LAYER
+  - Repositories: user_repo, file_repo, verification_repo, key_repo
+  - Abstract MongoDB operations
+
+Layer 6: PERSISTENCE LAYER
+  - MongoDB (pymongo)
+  - Encrypted file storage (AES-256-GCM)
+
+Layer 7: INFRASTRUCTURE
+  - Structured logging (file + console)
+  - Background tasks (FastAPI BackgroundTasks)
+
+═══════════════════════════════════════════════════════════════════
+PROJECT STRUCTURE (GENERATE ALL FILES)
+═══════════════════════════════════════════════════════════════════
+
+file-integrity-platform/
+├── gateway/
+│   ├── main.py              # FastAPI app, routes, startup/shutdown
+│   ├── auth.py              # JWT dependency injection
+│   ├── rate_limit.py        # Rate limiting middleware
+│   └── dependencies.py      # Shared dependencies
+│
+├── services/
+│   ├── orchestrator.py      # Multi-service coordinator
+│   ├── file_service.py      # File business logic
+│   ├── auth_service.py      # Authentication logic
+│   ├── crypto_service.py    # Cryptographic operations
+│   ├── verification_service.py  # Verification workflows
+│   └── audit_service.py     # Logging & monitoring
+│
+├── repositories/
+│   ├── user_repo.py         # User CRUD
+│   ├── file_repo.py         # File metadata CRUD
+│   ├── verification_repo.py # Verification records CRUD
+│   └── key_repo.py          # Crypto keys storage
+│
+├── security/
+│   ├── hashing.py           # SHA-256 chunk-based hashing
+│   ├── rsa.py               # RSA-2048 sign/verify
+│   ├── aes_storage.py       # AES-256-GCM encryption
+│   └── jwt_utils.py         # JWT create/decode
+│
+├── cli/
+│   └── client.py            # CLI interface
+│
+├── storage/
+│   ├── files/               # Encrypted files
+│   ├── signatures/          # RSA signatures
+│   └── keys/                # User key pairs
+│
+├── logs/
+│   └── .gitkeep
+│
+├── config.py                # Configuration management
+├── database.py              # MongoDB connection
+├── requirements.txt         # Dependencies
+└── README.md                # Setup & usage only
+
+═══════════════════════════════════════════════════════════════════
+REQUIRED API ENDPOINTS
+═══════════════════════════════════════════════════════════════════
+
+PUBLIC (No JWT):
+  POST /api/v1/auth/register    {username, email, password}
+  POST /api/v1/auth/login       {username, password} → {access_token}
+
+PROTECTED (JWT Required):
+  POST   /api/v1/files/upload         multipart/form-data
+  GET    /api/v1/files                list user's files
+  GET    /api/v1/files/{file_id}      file metadata
+  GET    /api/v1/files/{file_id}/download
+  DELETE /api/v1/files/{file_id}
+  POST   /api/v1/verify/{file_id}     integrity check
+  POST   /api/v1/verify/batch         {file_ids: []}
+  GET    /api/v1/audit/logs           query params: user_id, action, from, to
+  GET    /health                      system health check
+
+═══════════════════════════════════════════════════════════════════
+CRYPTOGRAPHIC IMPLEMENTATION
+═══════════════════════════════════════════════════════════════════
+
+SHA-256 Hashing:
+  - Chunk-based (8192 bytes) for large files
+  - Return hex digest
+
+RSA-2048:
+  - Key generation on user registration
+  - Sign: hash digest (not raw file)
+  - Verify: signature against hash
+  - Store: PEM format (private key encrypted with user password-derived key)
+
+AES-256-GCM:
+  - Encrypt all files before storage
+  - Key derivation: PBKDF2-SHA256 (100k iterations)
+  - Unique IV (12 bytes) per file
+  - Store: IV + ciphertext + tag
+
+═══════════════════════════════════════════════════════════════════
+VERIFICATION WORKFLOW (MANDATORY LOGIC)
+═══════════════════════════════════════════════════════════════════
+
+1. Validate file_id exists in DB
+2. Check user permissions
+3. Load file metadata (hash, signature, encrypted_path)
+4. Read encrypted file from storage
+5. Decrypt using AES-256-GCM
+6. Recompute SHA-256 (chunk-based)
+7. Compare: computed_hash vs stored_hash → hash_match
+8. Verify RSA signature using public key → signature_valid
+9. Determine: verified = hash_match AND signature_valid
+10. Save verification record to DB
+11. Update file.last_verified, file.verification_count
+12. Log audit event
+13. Return {verified, hash_match, signature_valid, tampered, timestamp}
+
+═══════════════════════════════════════════════════════════════════
+DATABASE SCHEMA (MongoDB Collections)
+═══════════════════════════════════════════════════════════════════
+
+users:
+  - _id, username (unique), email (unique), password_hash (bcrypt)
+  - rsa_public_key (PEM), rsa_private_key_encrypted (PEM)
+  - created_at, is_active, role
+
+files:
+  - _id, file_id (unique), user_id, filename
+  - original_hash (SHA-256), signature (base64)
+  - encrypted_path, size, upload_date
+  - last_verified, verification_count, is_deleted
+  - metadata: {mime_type, encryption_iv}
+
+verifications:
+  - _id, file_id, user_id, timestamp
+  - hash_match, signature_valid, verified
+  - current_hash, expected_hash, details
+
+audit_logs:
+  - _id, timestamp, user_id, username
+  - action (upload, verify, download, delete, login)
+  - resource_type, resource_id, result
+  - ip_address, details
+
+═══════════════════════════════════════════════════════════════════
+CLI COMMANDS (via API Gateway only)
+═══════════════════════════════════════════════════════════════════
+
+python cli/client.py register
+python cli/client.py login
+python cli/client.py upload <filepath> --description "text"
+python cli/client.py list
+python cli/client.py download <file_id> --output <path>
+python cli/client.py verify <file_id>
+python cli/client.py delete <file_id>
+python cli/client.py status
+
+Features: token storage, progress bars (tqdm), colored output (colorama)
+
+═══════════════════════════════════════════════════════════════════
+DEPENDENCIES (requirements.txt)
+═══════════════════════════════════════════════════════════════════
+
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pymongo==4.6.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+cryptography==41.0.7
+python-dotenv==1.0.0
+pydantic==2.5.0
+slowapi==0.1.9
+tqdm==4.66.1
+colorama==0.4.6
+requests==2.31.0
+
+═══════════════════════════════════════════════════════════════════
+CONFIGURATION (config.py)
+═══════════════════════════════════════════════════════════════════
+
+MongoDB: MONGO_URI, DATABASE_NAME
+JWT: SECRET_KEY, ALGORITHM (HS256), EXPIRATION (60 min)
+Security: MASTER_KEY, RSA_KEY_SIZE (2048)
+Storage: UPLOAD_DIR, SIGNATURE_DIR, KEY_DIR
+Rate Limit: 100/minute
+Logging: LOG_LEVEL, LOG_FILE
+
+Use environment variables with defaults.
+
+═══════════════════════════════════════════════════════════════════
+CODE QUALITY REQUIREMENTS
+═══════════════════════════════════════════════════════════════════
+
+- Clean, modular, PEP 8 compliant
+- Inline docstrings for all functions/classes
+- Type hints throughout
+- Proper exception handling (custom exceptions)
+- Input validation (Pydantic)
+- Async/await for I/O operations
+- Never expose internal errors to client
+- File size limit: 100MB
+- Password min length: 8 characters (bcrypt)
+
+═══════════════════════════════════════════════════════════════════
+README.md (MINIMAL CONTENT ONLY)
+═══════════════════════════════════════════════════════════════════
+
+Include only:
+1. Setup steps (MongoDB, pip install, .env)
+2. Run server: uvicorn gateway.main:app --reload
+3. CLI usage examples
+4. Default credentials (if any)
+
+═══════════════════════════════════════════════════════════════════
+FINAL INSTRUCTION
+═══════════════════════════════════════════════════════════════════
+
+Generate ALL files with COMPLETE implementations.
+Each file must be production-ready, executable code.
+Separate files clearly with file path headers.
+NO explanations between files.
+Code should work immediately after dependency installation.
