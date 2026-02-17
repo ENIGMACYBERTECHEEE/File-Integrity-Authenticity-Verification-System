@@ -47,8 +47,8 @@ function Login({ onLogin, onSwitchToRegister }) {
         setLoading(true);
 
         try {
-            await api.login(username, password);
-            onLogin();
+            const response = await api.login(username, password);
+            onLogin(response);
         } catch (err) {
             console.error('Login error:', err);
             const errorMessage = err.message || err.toString() || 'Login failed. Please try again.';
@@ -324,7 +324,7 @@ function FileUpload({ onUploadSuccess }) {
 }
 
 // File Item Component
-function FileItem({ file, onVerify, onDownload, onDelete }) {
+function FileItem({ file, onVerify, onDownload, onDelete, isAdmin }) {
     const [verifying, setVerifying] = useState(false);
 
     const handleVerify = async () => {
@@ -367,12 +367,14 @@ function FileItem({ file, onVerify, onDownload, onDelete }) {
                 </div>
             </div>
             <div className="file-actions">
-                <button 
-                    className="btn btn-secondary btn-small"
-                    onClick={handleVerify}
-                    disabled={verifying}>
-                    {verifying ? <span className="spinner"></span> : '🔍'} Verify
-                </button>
+                {isAdmin && (
+                    <button 
+                        className="btn btn-secondary btn-small"
+                        onClick={handleVerify}
+                        disabled={verifying}>
+                        {verifying ? <span className="spinner"></span> : '🔍'} Verify
+                    </button>
+                )}
                 <button 
                     className="btn btn-secondary btn-small"
                     onClick={() => onDownload(file.file_id, file.filename)}>
@@ -389,12 +391,13 @@ function FileItem({ file, onVerify, onDownload, onDelete }) {
 }
 
 // Dashboard Component
-function Dashboard({ onLogout }) {
+function Dashboard({ onLogout, currentUser }) {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [stats, setStats] = useState({ total: 0, verified: 0, pending: 0 });
+    const isAdmin = currentUser?.is_admin || false;
 
     const loadFiles = useCallback(async () => {
         try {
@@ -553,6 +556,7 @@ function Dashboard({ onLogout }) {
                                 onVerify={handleVerify}
                                 onDownload={handleDownload}
                                 onDelete={handleDelete}
+                                isAdmin={isAdmin}
                             />
                         ) : null)
                     )}
@@ -566,14 +570,18 @@ function Dashboard({ onLogout }) {
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
+    const [currentUser, setCurrentUser] = useState(null);
     const [currentView, setCurrentView] = useState('login'); // 'login' or 'register'
 
     useEffect(() => {
         // Check if user has a token
         const token = api.getToken();
-        if (token) {
+        const userData = localStorage.getItem('user_data');
+        if (token && userData) {
+            const user = JSON.parse(userData);
+            setCurrentUser(user);
             setIsAuthenticated(true);
-            checkAdminStatus();
+            setIsAdmin(user.is_admin || false);
         }
     }, []);
 
@@ -589,13 +597,17 @@ function App() {
         }
     };
 
-    const handleLogin = async () => {
+    const handleLogin = async (userData) => {
+        setCurrentUser(userData);
         setIsAuthenticated(true);
-        await checkAdminStatus();
+        setIsAdmin(userData.is_admin || false);
+        localStorage.setItem('user_data', JSON.stringify(userData));
     };
 
     const handleLogout = () => {
         api.logout();
+        localStorage.removeItem('user_data');
+        setCurrentUser(null);
         setIsAuthenticated(false);
         setIsAdmin(false);
         setCurrentView('login');
@@ -605,7 +617,7 @@ function App() {
         if (isAdmin) {
             return <AdminDashboard onLogout={handleLogout} />;
         }
-        return <Dashboard onLogout={handleLogout} />;
+        return <Dashboard onLogout={handleLogout} currentUser={currentUser} />;
     }
 
     if (currentView === 'register') {

@@ -13,7 +13,7 @@ from io import BytesIO
 
 from config import config
 from database import MongoDB
-from gateway.dependencies import get_current_user
+from gateway.dependencies import get_current_user, get_admin_user
 from gateway.rate_limit import limiter, get_client_ip
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
@@ -291,9 +291,9 @@ async def delete_file(
 async def verify_file(
     request: Request,
     file_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_admin_user)
 ):
-    """Verify file integrity and authenticity."""
+    """Verify file integrity and authenticity. (Admin only)"""
     try:
         result = service_orchestrator.verify_and_audit_file(
             file_id=file_id,
@@ -313,9 +313,9 @@ async def verify_file(
 async def verify_batch(
     request: Request,
     data: VerifyBatchRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_admin_user)
 ):
-    """Verify multiple files."""
+    """Verify multiple files. (Admin only)"""
     try:
         result = verification_service.verify_batch(
             file_ids=data.file_ids,
