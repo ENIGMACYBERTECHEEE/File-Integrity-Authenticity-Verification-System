@@ -77,7 +77,10 @@ async def get_admin_user(current_user: dict = Depends(get_current_user)) -> dict
     Raises:
         HTTPException: If user is not an admin
     """
-    if not current_user.get("is_admin", False):
+    # Check both is_admin and role fields for compatibility
+    is_admin = current_user.get("is_admin", False) or current_user.get("role") == "admin"
+    
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required for this operation"

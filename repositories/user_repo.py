@@ -161,6 +161,19 @@ class UserRepository:
             return False
         
         return self.collection.find_one(query) is not None
+    
+    def count(self) -> int:
+        """
+        Get total count of users.
+        
+        Returns:
+            int: Total number of users
+        """
+        try:
+            return self.collection.count_documents({})
+        except Exception as e:
+            logger.error(f"Error counting users: {str(e)}")
+            return 0
 
 
 user_repository = UserRepository()

@@ -208,6 +208,19 @@ class FileRepository:
             bool: True if file exists, False otherwise
         """
         return self.collection.find_one({"file_id": file_id, "is_deleted": False}) is not None
+    
+    def count(self) -> int:
+        """
+        Get total count of files (excluding deleted).
+        
+        Returns:
+            int: Total number of files
+        """
+        try:
+            return self.collection.count_documents({"is_deleted": False})
+        except Exception as e:
+            logger.error(f"Error counting files: {str(e)}")
+            return 0
 
 
 file_repository = FileRepository()

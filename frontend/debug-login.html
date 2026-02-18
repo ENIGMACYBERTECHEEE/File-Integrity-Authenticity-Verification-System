@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Login - File Integrity Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 30px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 6px;
+        }
+        .section h2 {
+            font-size: 18px;
+            color: #555;
+            margin-bottom: 15px;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success { color: #4caf50; }
+        .error { color: #f44336; }
+        .info { color: #2196f3; }
+        .warning { color: #ff9800; }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status.online { background: #d4edda; color: #155724; }
+        .status.offline { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Login Debugger</h1>
+        
+        <div class="section">
+            <h2>Server Status <span id="serverStatus" class="status offline">Checking...</span></h2>
+            <div id="serverLog" class="log">Checking server status...</div>
+        </div>
+
+        <div class="section">
+            <h2>Test Login</h2>
+            <input type="text" id="username" placeholder="Username" value="admin">
+            <input type="password" id="password" placeholder="Password" value="admin123">
+            <button id="loginBtn" onclick="testLogin()">Test Login</button>
+        </div>
+
+        <div class="section">
+            <h2>Debug Log</h2>
+            <div id="debugLog" class="log">Ready to test...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000/api/v1';
+        let logLines = [];
+
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type;
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            logLines.push(`<span class="${className}">[${timestamp}] ${prefix} ${message}</span>`);
+            document.getElementById('debugLog').innerHTML = logLines.join('\n');
+            document.getElementById('debugLog').scrollTop = document.getElementById('debugLog').scrollHeight;
+        }
+
+        async function checkServer() {
+            const serverLog = document.getElementById('serverLog');
+            const serverStatus = document.getElementById('serverStatus');
+            
+            try {
+                serverLog.textContent = 'Connecting to http://localhost:8000/health...';
+                const response = await fetch('http://localhost:8000/health');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    serverStatus.textContent = 'Online';
+                    serverStatus.className = 'status online';
+                    serverLog.innerHTML = `<span class="success">✅ Backend is online!</span>\n${JSON.stringify(data, null, 2)}`;
+                    return true;
+                } else {
+                    throw new Error(`Status ${response.status}`);
+                }
+            } catch (err) {
+                serverStatus.textContent = 'Offline';
+                serverStatus.className = 'status offline';
+                serverLog.innerHTML = `<span class="error">❌ Backend is offline!</span>\n\nError: ${err.message}\n\nPlease start the backend server:\nuvicorn gateway.main:app --reload --host 0.0.0.0 --port 8000`;
+                return false;
+            }
+        }
+
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+
+            logLines = [];
+            addLog('Starting login test...', 'info');
+            addLog(`Username: ${username}`, 'info');
+            addLog(`Password: ${'*'.repeat(password.length)}`, 'info');
+            addLog(`API URL: ${API_BASE_URL}/auth/login`, 'info');
+
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Testing...';
+
+            try {
+                addLog('Sending POST request...', 'info');
+                
+                const requestBody = { username, password };
+                addLog(`Request body: ${JSON.stringify(requestBody)}`, 'info');
+
+                const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                addLog(`Response status: ${response.status} ${response.statusText}`, 
+                    response.ok ? 'success' : 'error');
+
+                const data = await response.json();
+                addLog('Response received:', 'info');
+                addLog(JSON.stringify(data, null, 2), response.ok ? 'success' : 'error');
+
+                if (response.ok) {
+                    addLog('✅ LOGIN SUCCESSFUL!', 'success');
+                    addLog(`Token: ${data.access_token.substring(0, 50)}...`, 'success');
+                    addLog(`User: ${data.username} (${data.email})`, 'success');
+                    addLog(`Admin: ${data.is_admin}`, 'success');
+                    
+                    // Save token
+                    localStorage.setItem('auth_token', data.access_token);
+                    addLog('Token saved to localStorage', 'success');
+                    
+                    addLog('You can now use this token for authenticated requests', 'success');
+                } else {
+                    addLog('❌ LOGIN FAILED!', 'error');
+                    addLog(`Error: ${data.detail || 'Unknown error'}`, 'error');
+                    
+                    if (data.detail === 'Invalid username or password') {
+                        addLog('Please check your credentials:', 'warning');
+                        addLog('- Username should be: admin (lowercase)', 'warning');
+                        addLog('- Password should be: admin123', 'warning');
+                    }
+                }
+
+            } catch (err) {
+                addLog('❌ REQUEST FAILED!', 'error');
+                addLog(`Error: ${err.message}`, 'error');
+                addLog(err.stack, 'error');
+                
+                if (err.message.includes('fetch')) {
+                    addLog('This is a network error. Possible causes:', 'warning');
+                    addLog('1. Backend server is not running', 'warning');
+                    addLog('2. Backend is running on a different port', 'warning');
+                    addLog('3. CORS is blocking the request', 'warning');
+                }
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Test Login';
+            }
+        }
+
+        // Auto-check server on load
+        checkServer();
+        
+        // Re-check every 5 seconds
+        setInterval(checkServer, 5000);
+
+        // Also allow Enter key to submit
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') testLogin();
+        });
+    </script>
+</body>
+</html>

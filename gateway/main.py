@@ -1,7 +1,7 @@
 """
 FastAPI Gateway - Main application entry point.
 """
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -15,6 +15,7 @@ from config import config
 from database import MongoDB
 from gateway.dependencies import get_current_user, get_admin_user
 from gateway.rate_limit import limiter, get_client_ip
+from gateway.websocket_manager import connection_manager
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from services.orchestrator import service_orchestrator
@@ -22,6 +23,10 @@ from services.file_service import file_service
 from services.verification_service import verification_service
 from services.audit_service import audit_service
 from services.auth_service import auth_service
+from services.webhook_service import webhook_manager
+from services.monitoring_service import monitoring_service
+from services.admin_service import admin_service
+from repositories.file_repo import FileRepository
 
 # Configure logging
 logging.basicConfig(
@@ -115,12 +120,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/health", tags=["Health"])
 @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute")
 async def health_check(request: Request):
-    """System health check endpoint."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
-    }
+    """System health check endpoint with detailed metrics."""
+    return monitoring_service.get_system_health()
+
+
+# Monitoring endpoints
+@app.get("/api/v1/monitoring/metrics", tags=["Monitoring"])
+async def get_metrics(
+    metric_type: Optional[str] = None,
+    hours: int = 24,
+    current_user: dict = Depends(get_admin_user)
+):
+    """Get system metrics (admin only)."""
+    return monitoring_service.get_metrics_summary(metric_type, hours)
 
 
 # Authentication endpoints
@@ -330,6 +342,62 @@ async def verify_batch(
         )
 
 
+# Admin endpoints
+@app.patch("/api/v1/admin/files/{file_id}/status", tags=["Admin"])
+@limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute")
+async def update_file_status(
+    request: Request,
+    file_id: str,
+    status_update: dict,
+    current_user: dict = Depends(get_admin_user)
+):
+    """Update file verification status (admin only)."""
+    try:
+        verification_status = status_update.get("verification_status")
+        if verification_status not in ["verified", "tampered", "pending"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification status. Must be: verified, tampered, or pending"
+            )
+        
+        # Update file status in database
+        file_repo = FileRepository(database.db)
+        file = file_repo.get_by_id(file_id)
+        if not file:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+        
+        # Determine verified flag based on status
+        verified = (verification_status == "verified")
+        
+        file_repo.update_verification_status(file_id, verification_status, verified)
+        
+        # Log the action
+        audit_service.log_action(
+            user_id=str(current_user["_id"]),
+            action="admin_status_update",
+            resource_type="file",
+            resource_id=file_id,
+            details={"new_status": verification_status}
+        )
+        
+        return {
+            "message": "File status updated successfully",
+            "file_id": file_id,
+            "verification_status": verification_status
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File status update error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update file status"
+        )
+
+
 # Audit endpoints
 @app.get("/api/v1/audit/logs", tags=["Audit"])
 @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute")
@@ -357,6 +425,301 @@ async def get_audit_logs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve audit logs"
+        )
+
+
+# WebSocket endpoints
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    """
+    WebSocket endpoint for real-time updates.
+    
+    Args:
+        websocket: WebSocket connection
+        user_id: User ID for the connection
+    """
+    await connection_manager.connect(websocket, user_id)
+    try:
+        # Send welcome message
+        await websocket.send_json({
+            "type": "connection_established",
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": "Connected to File Integrity System"
+        })
+        
+        # Keep connection alive and handle incoming messages
+        while True:
+            data = await websocket.receive_text()
+            # Echo or process messages if needed
+            await websocket.send_json({
+                "type": "message_received",
+                "timestamp": datetime.utcnow().isoformat(),
+                "data": data
+            })
+    except WebSocketDisconnect:
+        connection_manager.disconnect(websocket, user_id)
+        logger.info(f"WebSocket disconnected for user {user_id}")
+
+
+# Webhook endpoints
+@app.post("/api/v1/webhooks/register", tags=["Webhooks"])
+async def register_webhook(
+    url: str,
+    events: List[str],
+    secret: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Register a webhook for event notifications."""
+    try:
+        webhook = webhook_manager.register_webhook(
+            user_id=str(current_user["_id"]),
+            url=url,
+            events=events,
+            secret=secret
+        )
+        return webhook
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Webhook registration failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/webhooks", tags=["Webhooks"])
+async def list_webhooks(current_user: dict = Depends(get_current_user)):
+    """List all registered webhooks."""
+    try:
+        webhooks = webhook_manager.list_webhooks(str(current_user["_id"]))
+        return {"webhooks": webhooks, "count": len(webhooks)}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve webhooks"
+        )
+
+
+@app.delete("/api/v1/webhooks/{webhook_id}", tags=["Webhooks"])
+async def delete_webhook(
+    webhook_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a webhook."""
+    try:
+        success = webhook_manager.delete_webhook(webhook_id, str(current_user["_id"]))
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        return {"message": "Webhook deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete webhook"
+        )
+
+
+# ═══════════════════════════════════════════════════════════════
+# ADMIN ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/v1/admin/stats", tags=["Admin"])
+async def get_admin_stats(
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get comprehensive system statistics (Admin only)."""
+    try:
+        stats = admin_service.get_system_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting admin stats: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get system statistics"
+        )
+
+
+@app.get("/api/v1/admin/users", tags=["Admin"])
+async def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get all users (Admin only)."""
+    try:
+        result = admin_service.get_all_users(skip=skip, limit=limit)
+        return result
+    except Exception as e:
+        logger.error(f"Error getting all users: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get users"
+        )
+
+
+@app.get("/api/v1/admin/files", tags=["Admin"])
+async def get_all_files(
+    skip: int = 0,
+    limit: int = 100,
+    include_deleted: bool = False,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get all files from all users (Admin only)."""
+    try:
+        result = admin_service.get_all_files(skip=skip, limit=limit, include_deleted=include_deleted)
+        return result
+    except Exception as e:
+        logger.error(f"Error getting all files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get files"
+        )
+
+
+@app.get("/api/v1/admin/verifications", tags=["Admin"])
+async def get_all_verifications(
+    skip: int = 0,
+    limit: int = 100,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get all verification records (Admin only)."""
+    try:
+        result = admin_service.get_all_verifications(skip=skip, limit=limit)
+        return result
+    except Exception as e:
+        logger.error(f"Error getting all verifications: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get verifications"
+        )
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+
+@app.patch("/api/v1/admin/users/{user_id}/status", tags=["Admin"])
+async def update_user_status(
+    user_id: str,
+    status_update: UserStatusUpdate,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Activate or deactivate a user (Admin only)."""
+    try:
+        success = admin_service.update_user_status(user_id, status_update.is_active)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        return {"message": "User status updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user status: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user status"
+        )
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+@app.patch("/api/v1/admin/users/{user_id}/role", tags=["Admin"])
+async def update_user_role(
+    user_id: str,
+    role_update: UserRoleUpdate,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Update user role (Admin only)."""
+    try:
+        success = admin_service.update_user_role(user_id, role_update.role)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        return {"message": "User role updated successfully"}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user role: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user role"
+        )
+
+
+@app.delete("/api/v1/admin/files/{file_id}", tags=["Admin"])
+async def admin_delete_file(
+    file_id: str,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Permanently delete a file (Admin only)."""
+    try:
+        success = admin_service.delete_file_permanently(file_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+        return {"message": "File permanently deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete file"
+        )
+
+
+@app.get("/api/v1/admin/users/{user_id}/activity", tags=["Admin"])
+async def get_user_activity(
+    user_id: str,
+    days: int = 7,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get user activity summary (Admin only)."""
+    try:
+        activity = admin_service.get_user_activity(user_id, days)
+        if not activity:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        return activity
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user activity: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user activity"
+        )
+
+
+@app.get("/api/v1/admin/activity-timeline", tags=["Admin"])
+async def get_activity_timeline(
+    hours: int = 24,
+    admin_user: dict = Depends(get_admin_user)
+):
+    """Get system activity timeline (Admin only)."""
+    try:
+        timeline = admin_service.get_activity_timeline(hours)
+        return {"timeline": timeline, "hours": hours}
+    except Exception as e:
+        logger.error(f"Error getting activity timeline: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get activity timeline"
         )
 
 

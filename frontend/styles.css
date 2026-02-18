@@ -566,6 +566,88 @@ body {
 .text-warning { color: var(--warning-500); }
 .text-muted { color: var(--text-muted); }
 
+/* Badge Styles */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--success-500);
+    border: 1px solid var(--success-500);
+}
+
+.badge-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--error-500);
+    border: 1px solid var(--error-500);
+}
+
+.badge-warning {
+    background: rgba(249, 115, 22, 0.2);
+    color: var(--warning-500);
+    border: 1px solid var(--warning-500);
+}
+
+.badge-info {
+    background: rgba(6, 182, 212, 0.2);
+    color: var(--accent-500);
+    border: 1px solid var(--accent-500);
+}
+
+/* Table Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-800);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+table thead {
+    background: var(--bg-900);
+}
+
+table th {
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border-color);
+}
+
+table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Card Styles */
+.card {
+    background: var(--bg-800);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
+}
+
+.card h3 {
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .header-content {
@@ -586,5 +668,14 @@ body {
     .file-actions {
         width: 100%;
         justify-content: flex-start;
+    }
+    
+    table {
+        font-size: 0.85em;
+    }
+    
+    table th,
+    table td {
+        padding: 8px;
     }
 }

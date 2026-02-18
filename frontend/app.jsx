@@ -36,8 +36,8 @@ function LoadingOverlay({ message = 'Processing...' }) {
 
 // Login Component
 function Login({ onLogin, onSwitchToRegister }) {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
+    const [username, setUsername] = useState('admin');
+    const [password, setPassword] = useState('admin123');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -334,7 +334,14 @@ function FileItem({ file, onVerify, onDownload, onDelete, isAdmin }) {
     };
 
     const formatDate = (dateStr) => {
-        return new Date(dateStr).toLocaleString();
+        if (!dateStr) return 'N/A';
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return 'N/A';
+            return date.toLocaleString();
+        } catch (e) {
+            return 'N/A';
+        }
     };
 
     const getStatusBadge = () => {
@@ -353,9 +360,9 @@ function FileItem({ file, onVerify, onDownload, onDelete, isAdmin }) {
             <div className="file-info">
                 <div className="file-name">{file.filename}</div>
                 <div className="file-meta">
-                    Uploaded: {formatDate(file.uploaded_at)} • 
+                    Uploaded: {formatDate(file.uploaded_at || file.upload_date || file.created_at)} • 
                     Verifications: {file.verification_count || 0} • 
-                    Hash: {file.file_hash.substring(0, 16)}...
+                    Hash: {file.file_hash ? file.file_hash.substring(0, 16) : 'N/A'}...
                 </div>
                 {file.description && (
                     <div className="file-meta" style={{ marginTop: '0.25rem' }}>
@@ -397,7 +404,15 @@ function Dashboard({ onLogout, currentUser }) {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [stats, setStats] = useState({ total: 0, verified: 0, pending: 0 });
-    const isAdmin = currentUser?.is_admin || false;
+    const [adminStats, setAdminStats] = useState(null);
+    const [allUsers, setAllUsers] = useState([]);
+    const [allFiles, setAllFiles] = useState([]);
+    const [verifications, setVerifications] = useState([]);
+    const [timeline, setTimeline] = useState([]);
+    const [activeTab, setActiveTab] = useState('files'); // 'files', 'users', 'verifications', 'activity'
+    
+    // Check if user is admin
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.is_admin || false;
 
     const loadFiles = useCallback(async () => {
         try {
@@ -426,9 +441,40 @@ function Dashboard({ onLogout, currentUser }) {
         }
     }, []);
 
+    const loadAdminData = useCallback(async () => {
+        if (!isAdmin) return;
+        
+        try {
+            // Load admin stats
+            const statsData = await api.get('/api/v1/admin/stats');
+            setAdminStats(statsData);
+
+            // Load all users
+            const usersData = await api.get('/api/v1/admin/users?limit=100');
+            setAllUsers(usersData.users || []);
+
+            // Load all files (admin view)
+            const filesData = await api.get('/api/v1/admin/files?limit=100');
+            setAllFiles(filesData.files || []);
+
+            // Load verifications
+            const verifsData = await api.get('/api/v1/admin/verifications?limit=50');
+            setVerifications(verifsData.verifications || []);
+
+            // Load activity timeline
+            const timelineData = await api.get('/api/v1/admin/activity-timeline?hours=24');
+            setTimeline(timelineData.timeline || []);
+        } catch (err) {
+            console.error('Error loading admin data:', err);
+        }
+    }, [isAdmin]);
+
     useEffect(() => {
         loadFiles();
-    }, [loadFiles]);
+        if (isAdmin) {
+            loadAdminData();
+        }
+    }, [loadFiles, loadAdminData, isAdmin]);
 
     const handleUploadSuccess = async () => {
         try {
@@ -481,6 +527,61 @@ function Dashboard({ onLogout, currentUser }) {
         }
     };
 
+    const toggleUserStatus = async (userId, currentStatus) => {
+        try {
+            await api.patch(`/api/v1/admin/users/${userId}/status`, {
+                is_active: !currentStatus
+            });
+            setSuccess('User status updated');
+            loadAdminData();
+            setTimeout(() => setSuccess(''), 3000);
+        } catch (err) {
+            setError('Failed to update user status');
+            setTimeout(() => setError(''), 3000);
+        }
+    };
+
+    const updateUserRole = async (userId, newRole) => {
+        try {
+            await api.patch(`/api/v1/admin/users/${userId}/role`, {
+                role: newRole
+            });
+            setSuccess('User role updated');
+            loadAdminData();
+            setTimeout(() => setSuccess(''), 3000);
+        } catch (err) {
+            setError('Failed to update user role');
+            setTimeout(() => setError(''), 3000);
+        }
+    };
+
+    const deleteFileAdmin = async (fileId) => {
+        if (!confirm('Are you sure you want to permanently delete this file?')) return;
+        try {
+            await api.delete(`/api/v1/admin/files/${fileId}`);
+            setSuccess('File permanently deleted');
+            loadAdminData();
+            loadFiles();
+            setTimeout(() => setSuccess(''), 3000);
+        } catch (err) {
+            setError('Failed to delete file');
+            setTimeout(() => setError(''), 3000);
+        }
+    };
+
+    const formatDate = (dateStr) => {
+        if (!dateStr) return 'N/A';
+        return new Date(dateStr).toLocaleString();
+    };
+
+    const formatBytes = (bytes) => {
+        if (!bytes) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    };
+
     if (loading) {
         return <LoadingOverlay message="Loading your files..." />;
     }
@@ -499,7 +600,8 @@ function Dashboard({ onLogout, currentUser }) {
                     <div className="nav-buttons">
                         <div className="user-info">
                             <span>👤</span>
-                            <span>Authenticated</span>
+                            <span>{currentUser?.username || 'User'}</span>
+                            {isAdmin && <span className="badge" style={{background: '#667eea', color: 'white', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', marginLeft: '8px'}}>ADMIN</span>}
                         </div>
                         <button className="btn btn-secondary btn-small" onClick={onLogout}>
                             Logout
@@ -513,54 +615,289 @@ function Dashboard({ onLogout, currentUser }) {
                 {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
                 <div className="dashboard-header">
-                    <h2>Dashboard</h2>
-                    <p style={{ color: 'var(--text-muted)' }}>Manage and verify your files securely</p>
+                    <h2>{isAdmin ? 'Admin Dashboard' : 'Dashboard'}</h2>
+                    <p style={{ color: 'var(--text-muted)' }}>
+                        {isAdmin ? 'Manage users, files, and system operations' : 'Manage and verify your files securely'}
+                    </p>
                 </div>
 
-                <div className="dashboard-stats">
-                    <div className="stat-card">
-                        <h3>Total Files</h3>
-                        <div className="value">{stats.total}</div>
-                    </div>
-                    <div className="stat-card">
-                        <h3>Verified Files</h3>
-                        <div className="value" style={{ color: 'var(--success-500)' }}>{stats.verified}</div>
-                    </div>
-                    <div className="stat-card">
-                        <h3>Pending Verification</h3>
-                        <div className="value" style={{ color: 'var(--warning-500)' }}>{stats.pending}</div>
-                    </div>
-                </div>
-
-                <FileUpload onUploadSuccess={handleUploadSuccess} />
-
-                <div className="file-list">
-                    <div className="file-list-header">
-                        <h3>Your Files ({files.length})</h3>
-                        <button className="btn btn-secondary btn-small" onClick={loadFiles}>
-                            🔄 Refresh
-                        </button>
-                    </div>
-                    
-                    {!files || files.length === 0 ? (
-                        <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📂</div>
-                            <p>No files uploaded yet</p>
-                            <p style={{ fontSize: '0.875rem' }}>Upload your first file to get started</p>
+                {isAdmin && adminStats && (
+                    <div className="dashboard-stats" style={{gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))'}}>
+                        <div className="stat-card">
+                            <h3>Total Users</h3>
+                            <div className="value">{adminStats.total_users}</div>
+                            <small style={{color: 'var(--success-500)'}}>+{adminStats.recent_users_24h} today</small>
                         </div>
-                    ) : (
-                        Array.isArray(files) && files.map(file => file && file.file_id ? (
-                            <FileItem
-                                key={file.file_id}
-                                file={file}
-                                onVerify={handleVerify}
-                                onDownload={handleDownload}
-                                onDelete={handleDelete}
-                                isAdmin={isAdmin}
-                            />
-                        ) : null)
-                    )}
-                </div>
+                        <div className="stat-card">
+                            <h3>Total Files</h3>
+                            <div className="value">{adminStats.total_files}</div>
+                            <small style={{color: 'var(--success-500)'}}>+{adminStats.recent_uploads_24h} today</small>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Verifications</h3>
+                            <div className="value">{adminStats.total_verifications}</div>
+                            <small>{adminStats.recent_verifications_24h} today</small>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Storage</h3>
+                            <div className="value">{adminStats.total_storage_mb}MB</div>
+                            <small>{formatBytes(adminStats.total_storage_bytes)}</small>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Success Rate</h3>
+                            <div className="value" style={{color: 'var(--success-500)'}}>{adminStats.verification_success_rate}%</div>
+                            <small>Verification accuracy</small>
+                        </div>
+                    </div>
+                )}
+
+                {!isAdmin && (
+                    <div className="dashboard-stats">
+                        <div className="stat-card">
+                            <h3>Total Files</h3>
+                            <div className="value">{stats.total}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Verified Files</h3>
+                            <div className="value" style={{ color: 'var(--success-500)' }}>{stats.verified}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Pending Verification</h3>
+                            <div className="value" style={{ color: 'var(--warning-500)' }}>{stats.pending}</div>
+                        </div>
+                    </div>
+                )}
+
+                {isAdmin && (
+                    <div style={{marginBottom: '2rem'}}>
+                        <div style={{display: 'flex', gap: '10px', borderBottom: '2px solid #e5e7eb', marginBottom: '20px'}}>
+                            <button 
+                                className={`btn ${activeTab === 'files' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setActiveTab('files')}
+                                style={{borderRadius: '8px 8px 0 0', borderBottom: activeTab === 'files' ? '3px solid #667eea' : 'none'}}
+                            >
+                                📁 My Files ({files.length})
+                            </button>
+                            <button 
+                                className={`btn ${activeTab === 'users' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setActiveTab('users')}
+                                style={{borderRadius: '8px 8px 0 0', borderBottom: activeTab === 'users' ? '3px solid #667eea' : 'none'}}
+                            >
+                                👥 All Users ({allUsers.length})
+                            </button>
+                            <button 
+                                className={`btn ${activeTab === 'allfiles' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setActiveTab('allfiles')}
+                                style={{borderRadius: '8px 8px 0 0', borderBottom: activeTab === 'allfiles' ? '3px solid #667eea' : 'none'}}
+                            >
+                                🗂️ All Files ({allFiles.length})
+                            </button>
+                            <button 
+                                className={`btn ${activeTab === 'verifications' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setActiveTab('verifications')}
+                                style={{borderRadius: '8px 8px 0 0', borderBottom: activeTab === 'verifications' ? '3px solid #667eea' : 'none'}}
+                            >
+                                ✓ Verifications ({verifications.length})
+                            </button>
+                            <button 
+                                className={`btn ${activeTab === 'activity' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setActiveTab('activity')}
+                                style={{borderRadius: '8px 8px 0 0', borderBottom: activeTab === 'activity' ? '3px solid #667eea' : 'none'}}
+                            >
+                                📊 Activity
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {(!isAdmin || activeTab === 'files') && (
+                    <>
+                        <FileUpload onUploadSuccess={handleUploadSuccess} />
+
+                        <div className="file-list">
+                            <div className="file-list-header">
+                                <h3>Your Files ({files.length})</h3>
+                                <button className="btn btn-secondary btn-small" onClick={loadFiles}>
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            
+                            {!files || files.length === 0 ? (
+                                <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                    <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📂</div>
+                                    <p>No files uploaded yet</p>
+                                    <p style={{ fontSize: '0.875rem' }}>Upload your first file to get started</p>
+                                </div>
+                            ) : (
+                                Array.isArray(files) && files.map(file => file && file.file_id ? (
+                                    <FileItem
+                                        key={file.file_id}
+                                        file={file}
+                                        onVerify={handleVerify}
+                                        onDownload={handleDownload}
+                                        onDelete={handleDelete}
+                                        isAdmin={isAdmin}
+                                    />
+                                ) : null)
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {isAdmin && activeTab === 'users' && (
+                    <div className="card">
+                        <h3 style={{marginBottom: '1rem'}}>User Management</h3>
+                        <table style={{width: '100%', borderCollapse: 'collapse'}}>
+                            <thead>
+                                <tr style={{borderBottom: '2px solid #e5e7eb'}}>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Username</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Email</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Role</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Status</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Created</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allUsers.map(user => (
+                                    <tr key={user._id} style={{borderBottom: '1px solid #e5e7eb'}}>
+                                        <td style={{padding: '12px'}}>{user.username}</td>
+                                        <td style={{padding: '12px'}}>{user.email}</td>
+                                        <td style={{padding: '12px'}}>
+                                            <select 
+                                                value={user.role || 'user'}
+                                                onChange={(e) => updateUserRole(user._id, e.target.value)}
+                                                className="btn btn-small"
+                                            >
+                                                <option value="user">User</option>
+                                                <option value="admin">Admin</option>
+                                            </select>
+                                        </td>
+                                        <td style={{padding: '12px'}}>
+                                            <span className={`badge ${user.is_active ? 'badge-success' : 'badge-danger'}`}>
+                                                {user.is_active ? 'Active' : 'Inactive'}
+                                            </span>
+                                        </td>
+                                        <td style={{padding: '12px'}}>{formatDate(user.created_at)}</td>
+                                        <td style={{padding: '12px'}}>
+                                            <button 
+                                                className={`btn btn-small ${user.is_active ? 'btn-danger' : 'btn-primary'}`}
+                                                onClick={() => toggleUserStatus(user._id, user.is_active)}
+                                            >
+                                                {user.is_active ? 'Deactivate' : 'Activate'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {isAdmin && activeTab === 'allfiles' && (
+                    <div className="card">
+                        <h3 style={{marginBottom: '1rem'}}>All System Files</h3>
+                        <table style={{width: '100%', borderCollapse: 'collapse'}}>
+                            <thead>
+                                <tr style={{borderBottom: '2px solid #e5e7eb'}}>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Filename</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Owner</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Size</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Upload Date</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Verifications</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allFiles.map(file => (
+                                    <tr key={file._id} style={{borderBottom: '1px solid #e5e7eb'}}>
+                                        <td style={{padding: '12px'}}>{file.filename}</td>
+                                        <td style={{padding: '12px'}}>{file.username}</td>
+                                        <td style={{padding: '12px'}}>{formatBytes(file.size)}</td>
+                                        <td style={{padding: '12px'}}>{formatDate(file.upload_date)}</td>
+                                        <td style={{padding: '12px'}}>{file.verification_count || 0}</td>
+                                        <td style={{padding: '12px'}}>
+                                            <button 
+                                                className="btn btn-small btn-danger"
+                                                onClick={() => deleteFileAdmin(file.file_id)}
+                                            >
+                                                Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {isAdmin && activeTab === 'verifications' && (
+                    <div className="card">
+                        <h3 style={{marginBottom: '1rem'}}>Verification Logs</h3>
+                        <table style={{width: '100%', borderCollapse: 'collapse'}}>
+                            <thead>
+                                <tr style={{borderBottom: '2px solid #e5e7eb'}}>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>File</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>User</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Timestamp</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Hash</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Signature</th>
+                                    <th style={{padding: '12px', textAlign: 'left'}}>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {verifications.map(verif => (
+                                    <tr key={verif._id} style={{borderBottom: '1px solid #e5e7eb'}}>
+                                        <td style={{padding: '12px'}}>{verif.filename}</td>
+                                        <td style={{padding: '12px'}}>{verif.username}</td>
+                                        <td style={{padding: '12px'}}>{formatDate(verif.timestamp)}</td>
+                                        <td style={{padding: '12px'}}>
+                                            <span className={`badge ${verif.hash_match ? 'badge-success' : 'badge-danger'}`}>
+                                                {verif.hash_match ? 'Match' : 'Mismatch'}
+                                            </span>
+                                        </td>
+                                        <td style={{padding: '12px'}}>
+                                            <span className={`badge ${verif.signature_valid ? 'badge-success' : 'badge-danger'}`}>
+                                                {verif.signature_valid ? 'Valid' : 'Invalid'}
+                                            </span>
+                                        </td>
+                                        <td style={{padding: '12px'}}>
+                                            <span className={`badge ${verif.verified ? 'badge-success' : 'badge-danger'}`}>
+                                                {verif.verified ? 'VERIFIED' : 'FAILED'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {isAdmin && activeTab === 'activity' && (
+                    <div className="card">
+                        <h3 style={{marginBottom: '1rem'}}>System Activity (Last 24h)</h3>
+                        {timeline.map((event, idx) => (
+                            <div key={idx} style={{padding: '15px', borderLeft: '3px solid #667eea', marginBottom: '12px', background: '#f9fafb', borderRadius: '0 8px 8px 0'}}>
+                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                    <div>
+                                        <span className={`badge ${event.type === 'upload' ? 'badge-info' : 'badge-warning'}`}>
+                                            {event.type.toUpperCase()}
+                                        </span>
+                                        <strong style={{marginLeft: '10px'}}>{event.username}</strong>
+                                        <span style={{margin: '0 10px', color: '#6b7280'}}>→</span>
+                                        <strong>{event.filename}</strong>
+                                        {event.type === 'verification' && (
+                                            <span className={`badge ${event.verified ? 'badge-success' : 'badge-danger'}`} style={{marginLeft: '10px'}}>
+                                                {event.verified ? '✓ Verified' : '✗ Failed'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div style={{fontSize: '0.85em', color: '#6b7280'}}>{formatDate(event.timestamp)}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </>
     );
@@ -600,7 +937,9 @@ function App() {
     const handleLogin = async (userData) => {
         setCurrentUser(userData);
         setIsAuthenticated(true);
-        setIsAdmin(userData.is_admin || false);
+        // Check role from userData
+        const adminStatus = userData.role === 'admin' || userData.is_admin || false;
+        setIsAdmin(adminStatus);
         localStorage.setItem('user_data', JSON.stringify(userData));
     };
 
@@ -614,9 +953,6 @@ function App() {
     };
 
     if (isAuthenticated) {
-        if (isAdmin) {
-            return <AdminDashboard onLogout={handleLogout} />;
-        }
         return <Dashboard onLogout={handleLogout} currentUser={currentUser} />;
     }
 

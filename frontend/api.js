@@ -61,6 +61,10 @@ class APIService {
 
     // Login user
     async login(username, password) {
+        console.log('[API] Attempting login...');
+        console.log('[API] Username:', username);
+        console.log('[API] API URL:', `${API_BASE_URL}/auth/login`);
+        
         try {
             const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
@@ -68,16 +72,22 @@ class APIService {
                 body: JSON.stringify({ username, password })
             });
             
+            console.log('[API] Response status:', response.status, response.statusText);
+            
             if (!response.ok) {
                 const error = await response.json();
+                console.error('[API] Login failed:', error);
                 const errorMessage = error.detail || error.message || 'Login failed';
                 throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
             }
             
             const data = await response.json();
+            console.log('[API] Login successful!');
+            console.log('[API] User:', data.username, '- Admin:', data.is_admin);
             this.saveToken(data.access_token);
             return data;
         } catch (err) {
+            console.error('[API] Login error:', err);
             if (err instanceof Error) {
                 throw err;
             }
@@ -125,16 +135,21 @@ class APIService {
 
     // List files
     async listFiles() {
+        console.log('[API] Fetching files list...');
         const response = await fetch(`${API_BASE_URL}/files`, {
             headers: this.getHeaders()
         });
 
         if (!response.ok) {
             const error = await response.json();
+            console.error('[API] Failed to fetch files:', error);
             throw new Error(error.detail || 'Failed to fetch files');
         }
 
-        return await response.json();
+        const data = await response.json();
+        console.log('[API] Files received:', data);
+        console.log('[API] Number of files:', data.files?.length || 0);
+        return data;
     }
 
     // Get file metadata
@@ -149,6 +164,11 @@ class APIService {
         }
 
         return await response.json();
+    }
+
+    // Get file details (alias for getFileMetadata)
+    async getFileDetails(fileId) {
+        return await this.getFileMetadata(fileId);
     }
 
     // Verify file
@@ -203,6 +223,25 @@ class APIService {
         return await response.json();
     }
 
+    // Update file status (admin only)
+    async updateFileStatus(fileId, status) {
+        const response = await fetch(`${API_BASE_URL}/admin/files/${fileId}/status`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${this.getToken()}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ verification_status: status })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to update file status');
+        }
+
+        return await response.json();
+    }
+
     // Health check
     async healthCheck() {
         const response = await fetch('http://localhost:8000/health');
@@ -212,3 +251,7 @@ class APIService {
 
 // Export API service
 const api = new APIService();
+
+// Log API methods for debugging
+console.log('[API] APIService loaded. Methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(api)));
+console.log('[API] updateFileStatus exists:', typeof api.updateFileStatus === 'function');

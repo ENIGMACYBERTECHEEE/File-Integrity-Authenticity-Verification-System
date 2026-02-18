@@ -9,6 +9,7 @@ function AdminDashboard({ onLogout }) {
     const [allFiles, setAllFiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
     const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'users', 'files'
 
     useEffect(() => {
@@ -17,41 +18,72 @@ function AdminDashboard({ onLogout }) {
 
     const loadAdminData = async () => {
         try {
+            console.log('[AdminDashboard] Loading admin data...');
             const token = api.getToken();
             
-            // Load stats
+            // Load stats - Try admin endpoint first, fall back to calculating from files
+            console.log('[AdminDashboard] Fetching stats...');
             const statsResponse = await fetch('http://localhost:8000/api/v1/admin/stats', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (statsResponse.ok) {
                 const statsData = await statsResponse.json();
+                console.log('[AdminDashboard] Stats received:', statsData);
                 setStats(statsData);
+            } else {
+                console.warn('[AdminDashboard] Stats endpoint failed:', statsResponse.status);
             }
 
-            // Load users
+            // Load users - Try admin endpoint first
+            console.log('[AdminDashboard] Fetching users...');
             const usersResponse = await fetch('http://localhost:8000/api/v1/admin/users', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (usersResponse.ok) {
                 const usersData = await usersResponse.json();
+                console.log('[AdminDashboard] Users received:', usersData);
                 setUsers(usersData.users || []);
+            } else {
+                console.warn('[AdminDashboard] Users endpoint failed:', usersResponse.status);
             }
 
-            // Load all files
-            const filesResponse = await fetch('http://localhost:8000/api/v1/admin/files', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (filesResponse.ok) {
-                const filesData = await filesResponse.json();
-                setAllFiles(filesData.files || []);
+            // Load all files - Use the working user files endpoint
+            console.log('[AdminDashboard] Fetching files from user endpoint...');
+            const filesData = await api.listFiles();
+            console.log('[AdminDashboard] Files data:', filesData);
+            if (filesData && filesData.files) {
+                console.log('[AdminDashboard] Setting files:', filesData.files.length, 'files');
+                setAllFiles(filesData.files);
+                
+                // Update stats if admin endpoint didn't work
+                if (!statsResponse.ok) {
+                    const calculatedStats = {
+                        total_files: filesData.files.length,
+                        verified_files: filesData.files.filter(f => f.verification_status === 'verified').length,
+                        tampered_files: filesData.files.filter(f => f.verification_status === 'tampered').length,
+                        pending_files: filesData.files.filter(f => f.verification_status === 'pending').length,
+                        total_verifications: filesData.files.reduce((sum, f) => sum + (f.verification_count || 0), 0),
+                        storage_used_mb: filesData.files.reduce((sum, f) => sum + (f.size || 0), 0) / (1024 * 1024)
+                    };
+                    console.log('[AdminDashboard] Calculated stats:', calculatedStats);
+                    setStats(calculatedStats);
+                }
+            } else {
+                console.error('[AdminDashboard] No files data received');
             }
 
             setLoading(false);
         } catch (err) {
             console.error('Admin data load error:', err);
-            setError('Failed to load admin data');
+            setError('Failed to load admin data: ' + err.message);
             setLoading(false);
         }
+    };
+
+    const handleUploadSuccess = async () => {
+        setSuccess('File uploaded successfully!');
+        await loadAdminData();
+        setTimeout(() => setSuccess(''), 3000);
     };
 
     if (loading) {
@@ -83,6 +115,7 @@ function AdminDashboard({ onLogout }) {
 
             <div className="container">
                 {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+                {success && <Alert type="success" message={success} onClose={() => setSuccess('')} />}
 
                 <div className="dashboard-header">
                     <h2>System Overview</h2>
@@ -90,10 +123,6 @@ function AdminDashboard({ onLogout }) {
                 </div>
 
                 <div className="dashboard-stats">
-                    <div className="stat-card">
-                        <h3>Total Users</h3>
-                        <div className="value">{stats.total_users}</div>
-                    </div>
                     <div className="stat-card">
                         <h3>Total Files</h3>
                         <div className="value">{stats.total_files}</div>
@@ -103,19 +132,14 @@ function AdminDashboard({ onLogout }) {
                         <div className="value" style={{ color: 'var(--success-500)' }}>{stats.verified_files}</div>
                     </div>
                     <div className="stat-card">
-                        <h3>Tampered Files</h3>
-                        <div className="value" style={{ color: 'var(--error-500)' }}>{stats.tampered_files}</div>
-                    </div>
-                    <div className="stat-card">
                         <h3>Total Verifications</h3>
                         <div className="value">{stats.total_verifications}</div>
                     </div>
-                    <div className="stat-card">
-                        <h3>Storage Used</h3>
-                        <div className="value">{stats.total_storage_mb} MB</div>
-                    </div>
                 </div>
+File Upload Section */}
+                <FileUpload onUploadSuccess={handleUploadSuccess} />
 
+                {/* 
                 {/* Tab Navigation */}
                 <div style={{ marginTop: '2rem', marginBottom: '1rem', display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)' }}>
                     <button 
@@ -132,19 +156,6 @@ function AdminDashboard({ onLogout }) {
                         Overview
                     </button>
                     <button 
-                        onClick={() => setActiveTab('users')}
-                        style={{ 
-                            padding: '0.75rem 1.5rem', 
-                            background: 'none', 
-                            border: 'none', 
-                            borderBottom: activeTab === 'users' ? '2px solid var(--primary-500)' : '2px solid transparent',
-                            color: activeTab === 'users' ? 'var(--primary-500)' : 'var(--text-secondary)',
-                            cursor: 'pointer',
-                            fontWeight: 600
-                        }}>
-                        Users ({users.length})
-                    </button>
-                    <button 
                         onClick={() => setActiveTab('files')}
                         style={{ 
                             padding: '0.75rem 1.5rem', 
@@ -159,38 +170,25 @@ function AdminDashboard({ onLogout }) {
                     </button>
                 </div>
 
-                {/* Users Tab */}
-                {activeTab === 'users' && (
-                    <div className="file-list">
-                        <div className="file-list-header">
-                            <h3>All Users</h3>
-                        </div>
-                        {users.map(user => (
-                            <div key={user._id} className="file-item">
-                                <div className="file-info">
-                                    <div className="file-name">{user.username}</div>
-                                    <div className="file-meta">
-                                        Email: {user.email} • 
-                                        Role: {user.is_admin ? 'Administrator' : 'User'} • 
-                                        ID: {user._id}
-                                    </div>
-                                    {user.created_at && (
-                                        <div className="file-meta">Joined: {new Date(user.created_at).toLocaleString()}</div>
-                                    )}
-                                </div>
-                                <div>
-                                    {user.is_admin && <span className="badge badge-verified">Admin</span>}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
                 {/* Files Tab */}
                 {activeTab === 'files' && (
                     <div className="file-list">
                         <div className="file-list-header">
                             <h3>All Files in System</h3>
+                            <button 
+                                onClick={loadAdminData}
+                                style={{
+                                    padding: '0.5rem 1rem',
+                                    background: 'var(--primary-500)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '0.875rem',
+                                    fontWeight: 500
+                                }}>
+                                🔄 Refresh All
+                            </button>
                         </div>
                         {allFiles.map(file => (
                             <div key={file.file_id} className="file-item">
@@ -207,9 +205,78 @@ function AdminDashboard({ onLogout }) {
                                     </div>
                                     <div style={{ marginTop: '0.5rem' }}>
                                         {file.verification_status === 'verified' && <span className="badge badge-verified">✓ Verified</span>}
-                                        {file.verification_status === 'tampered' && <span className="badge badge-tampered">⚠ Tampered</span>}
+                                        {file.verification_status === 'tampered' && <span className="badge badge-tampered">✗ Rejected</span>}
                                         {file.verification_status === 'pending' && <span className="badge badge-pending">⏳ Pending</span>}
                                     </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                await api.downloadFile(file.file_id, file.filename);
+                                                setSuccess('File opened/downloaded!');
+                                            } catch (err) {
+                                                setError('Failed to open file: ' + err.message);
+                                            }
+                                        }}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            background: 'var(--info-500, #3b82f6)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 500
+                                        }}>
+                                        📂 Open
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                await api.verifyFile(file.file_id);
+                                                setSuccess('File verification completed!');
+                                                await loadAdminData();
+                                            } catch (err) {
+                                                setError('Verification failed: ' + err.message);
+                                            }
+                                        }}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            background: 'var(--success-500)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 500
+                                        }}>
+                                        ✓ Verified
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            if (confirm(`Delete "${file.filename}"? This cannot be undone.`)) {
+                                                try {
+                                                    await api.deleteFile(file.file_id);
+                                                    setSuccess('File deleted successfully!');
+                                                    await loadAdminData();
+                                                } catch (err) {
+                                                    setError('Delete failed: ' + err.message);
+                                                }
+                                            }
+                                        }}
+                                        style={{
+                                            padding: '0.5rem 1rem',
+                                            background: 'var(--error-500)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            fontSize: '0.875rem',
+                                            fontWeight: 500
+                                        }}>
+                                        🗑 Delete
+                                    </button>
                                 </div>
                             </div>
                         ))}
@@ -226,12 +293,6 @@ function AdminDashboard({ onLogout }) {
                                     <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Verification Rate</p>
                                     <p style={{ fontSize: '1.5rem', fontWeight: 600 }}>
                                         {stats.total_files > 0 ? Math.round((stats.verified_files / stats.total_files) * 100) : 0}%
-                                    </p>
-                                </div>
-                                <div>
-                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Avg per User</p>
-                                    <p style={{ fontSize: '1.5rem', fontWeight: 600 }}>
-                                        {stats.total_users > 0 ? Math.round(stats.total_files / stats.total_users) : 0} files
                                     </p>
                                 </div>
                                 <div>
